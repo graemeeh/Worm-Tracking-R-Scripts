@@ -1,3 +1,8 @@
+# The below script makes plots and does t tests on outputted data from the tracker. 
+# this is for calculating chemotaxis index over time (procedure from Margie et al. 2013) and doing stats on that. 
+# the marked circles outputted by the tracker are used to figure out quadrants. so make sure plates are aligned on tracker (i.e. lines 
+# are vertical or horizontal). 
+
 library(ggplot2)
 library(dplyr)
 library(tidyr)
@@ -10,7 +15,7 @@ timelapse_interval_s = 10
 controls = "tgMOR"
 framesize = c(2456, 2052)
 
-#these should be appropriately named .csv files containing worm midpoint positions over time
+#these should be appropriately named .csv files containing worm centroid positions over time
 position_files = list.files(path = folder, pattern = "*.avi_worms.csv", ignore.case = T, recursive=T, full.names = T) 
 position_data = lapply(position_files, read.csv)
 names(position_data) = position_files
