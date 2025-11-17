@@ -3,6 +3,7 @@
 # the marked circles outputted by the tracker are used to figure out quadrants. so make sure plates are aligned on tracker (i.e. lines 
 # are vertical or horizontal). 
 
+
 library(ggplot2)
 library(dplyr)
 library(tidyr)
@@ -14,8 +15,11 @@ folder = "./GE Octanol quadrants - Copy"
 timelapse_interval_s = 10
 controls = "tgMOR"
 framesize = c(2456, 2052)
+centre_radius = 200
 
-#these should be appropriately named .csv files containing worm centroid positions over time
+options(dplyr.summarise.inform = TRUE)
+
+#these should be appropriately named .csv files containing worm midpoint positions over time
 position_files = list.files(path = folder, pattern = "*.avi_worms.csv", ignore.case = T, recursive=T, full.names = T) 
 position_data = lapply(position_files, read.csv)
 names(position_data) = position_files
@@ -88,6 +92,11 @@ exclude_circle = function(x, y, circ_x, circ_y, rad){
   return (!((x-circ_x)^2 + (y-circ_y)^2 <= rad^2))
 }
 
+include_circle = function(x, y, circ_x, circ_y, rad){
+  return ((x-circ_x)^2 + (y-circ_y)^2 <= rad^2)
+}
+
+
 newdf = data.frame(time=numeric(), 
                    chemotaxis_index = numeric(), 
                    n = numeric(), 
@@ -107,9 +116,12 @@ for (i in position_files) {
   # set cutoff lines for x and y
   x_line = center_circle[,"x1"][1]
   y_line = center_circle[,"y1"][1]
+  radius = center_circle[,"x2.radius"][1]
   
   # filter out center circle worm
-  position$centre = exclude_circle(position$centroid_x, position$centroid_y, x_line, y_line, 200)
+  position$centre = exclude_circle(position$centroid_x, position$centroid_y, x_line, y_line, centre_radius)
+  position = position[position$centre == T,]
+  position$centre = include_circle(position$centroid_x, position$centroid_y, x_line, y_line, radius)
   position = position[position$centre == T,]
   # populate df_new with T or F, based on below conditions
   position$oct_quadrant = (ifelse(
@@ -163,26 +175,38 @@ strain_cleanup = function(df){
 }
 
 
+strains = c()
+meanauc_total = c()
+ci_total = c()
+pvalues_total = c()
+meanauc_last5 = c()
+ci_last5 = c()
+pvalues_last5 = c()
+n= c()
+
+total_data = data.frame(strain = c(), file = c(), c_auc = c())
+last5_data = data.frame(strain = c(), file = c(), c_auc = c())
 
 for (i in unique(newdf$strain)){
-  if (i != controls){
+  if (i != "controls"){
     df = newdf[newdf$strain == i | newdf$strain == controls,]
     if (length(unique(df$strain)) > 1){
-      
       
       folders = unique(sapply(df[df$strain == i,]$file, FUN = function(x) {strsplit(x, "/")[[1]][3]}))
       df <- df[sapply(df$file, FUN = function(x) { strsplit(x, "/")[[1]][3] }) %in% folders, ]
       non_nan_newdf = strain_cleanup(df)
+      
       df <- non_nan_newdf %>%
         group_by(strain, time) %>%
         filter(sum(!is.na(chemotaxis_index)) > 1) %>%
-        summarise(
+        summarise(.groups="keep",
           c_sd = sd(chemotaxis_index, na.rm = T),
           c_mean = mean(chemotaxis_index, na.rm = T),
           c_confint = mean(chemotaxis_index, na.rm = T) - t.test(chemotaxis_index)$conf.int[1]
         )
+      
       df = df %>% arrange(factor(strain, levels = c('tgMOR', i))) %>% mutate(strain=factor(strain, levels = c('tgMOR', i)))
-      length(df[df$strain == 'irk-2',]$strain)
+      
       pi = ggplot(data = df, aes(x = time, y = c_mean, colour = strain, ymin = c_mean-c_confint, ymax = c_mean+c_confint)) + 
         geom_line() + 
         theme_classic() + 
@@ -199,35 +223,80 @@ for (i in unique(newdf$strain)){
         height = 3.5, 
         dpi = 600)
     }
-    last10mins = non_nan_newdf[non_nan_newdf$time > 2,]
+    
+    last5mins = non_nan_newdf[non_nan_newdf$time > 26,]
     
     df.summary_auc <- non_nan_newdf %>%
       group_by(strain, file) %>%
-      summarise(
+      summarise(.groups="keep", 
         c_auc = trapz(time, chemotaxis_index)
       )
-    df.summary_last10 <- last10mins %>%
+    
+    df.summary_last5 <- last5mins %>%
       group_by(strain, file) %>%
-      summarise(
+      summarise(.groups="keep",
         c_auc = trapz(time, chemotaxis_index)
       )
-    
-    print(i)
-    print("full analysis, bonferroni corrected:")
-    print(t.test(c_auc ~ strain, data = df.summary_auc)$p.value * (length(unique(newdf$strain))-2))
-    print("last 10 mins, bonferroni corrected:")
-    print(t.test(c_auc ~ strain, data = df.summary_last10)$p.value * (length(unique(newdf$strain))-2))
-    
+    if (i != "WT"){
+      total_data = dplyr::bind_rows(total_data, df.summary_auc[df.summary_auc$strain == i,])
+      last5_data = dplyr::bind_rows(last5_data, df.summary_last5[df.summary_last5$strain == i,])
+      strains = append(strains, i)
+      n = append(n, length(df.summary_auc[df.summary_auc$strain == i,]$strain))
+      total = t.test(df.summary_auc[df.summary_auc$strain == i,]$c_auc)
+      meanauc_total = append(meanauc_total, total$estimate[[1]])
+      ci_total = append(ci_total, (total$estimate[[1]] - total$conf.int[[1]]))
+      pvalues_total = append(pvalues_total, t.test(c_auc ~ strain, data = df.summary_auc)$p.value * (length(unique(newdf$strain))-2))
+      
+      last5 = t.test(df.summary_last5[df.summary_last5$strain == i,]$c_auc)
+      meanauc_last5 = append(meanauc_last5, last5$estimate[[1]])
+      ci_last5 = append(ci_last5, (last5$estimate[[1]] - last5$conf.int[[1]]))
+      pvalues_last5 = append(pvalues_last5, t.test(c_auc ~ strain, data = df.summary_last5)$p.value * (length(unique(newdf$strain))-2))
+      
     }
+
+    print(i)
+        }
 
   
   
 }
 
+df_out = data.frame(strains, meanauc_total, ci_total, pvalues_total, meanauc_last5, ci_last5, pvalues_last5, n)
 
+Strains.color <- ifelse(df_out$strain =="tgMOR","lightblue","lightgray")
+p1 = ggplot(data = df_out, aes(x = strains, y = -meanauc_total, fill = Strains.color)) + 
+  geom_bar(stat="identity", show.legend = FALSE) + 
+  ylab("Mean AUC over whole trial") + 
+  xlab("Strains") + 
+  geom_errorbar(aes(ymin = -meanauc_total-ci_total, ymax=-meanauc_total+ci_total), width=.2, position=position_dodge(.9)) + 
+  theme_classic() +
+  scale_fill_manual(name = "strains", values=Strains.color)
 
+p1
 
+p2 = ggplot(data = df_out, aes(x = strains, y = -meanauc_last5, fill = Strains.color)) + 
+  geom_bar(stat="identity", show.legend = FALSE) + 
+  geom_errorbar(aes(ymin = -meanauc_last5-ci_last5, ymax=-meanauc_last5+ci_last5), width=.2,
+                position=position_dodge(.9)) + 
+  ylab("Mean AUC over last 5 minutes") +
+  xlab("Strains")+
+  scale_fill_manual(values=Strains.color) + 
+  theme_classic() 
+  
+p2
 
+ggsave(
+  filename = "total.png",
+  plot = p1, 
+  width = 7,
+  height = 3.5, 
+  dpi = 600)
 
+ggsave(
+  filename = "last_5.png",
+  plot = p2, 
+  width = 7,
+  height = 3.5, 
+  dpi = 600)
 
 
