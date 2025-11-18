@@ -159,7 +159,7 @@ newdf$strain = strainrenamer(newdf$strain)
 print(unique(newdf$strain))
 strain_cleanup = function(df){
   non_nan_newdf = na.omit(df)
-  
+
   strainmins = c()
   for (i in unique(non_nan_newdf$file)){
     strainmins = append(strainmins, min(non_nan_newdf[non_nan_newdf$file == i,]$time))
@@ -188,7 +188,7 @@ total_data = data.frame(strain = c(), file = c(), c_auc = c())
 last5_data = data.frame(strain = c(), file = c(), c_auc = c())
 
 for (i in unique(newdf$strain)){
-  if (i != "controls"){
+  if (i != "tgMOR"){
     df = newdf[newdf$strain == i | newdf$strain == controls,]
     if (length(unique(df$strain)) > 1){
       
@@ -205,7 +205,12 @@ for (i in unique(newdf$strain)){
           c_confint = mean(chemotaxis_index, na.rm = T) - t.test(chemotaxis_index)$conf.int[1]
         )
       
-      df = df %>% arrange(factor(strain, levels = c('tgMOR', i))) %>% mutate(strain=factor(strain, levels = c('tgMOR', i)))
+      if (i!="tgMOR"){
+        df = df %>% arrange(factor(strain, levels = c('tgMOR', i))) %>% mutate(strain=factor(strain, levels = c('tgMOR', i)))
+      }
+      else{
+        df = df %>% arrange(factor(strain, levels = c('tgMOR', i))) %>% mutate(strain=factor(strain, levels = c('tgMOR', i)))
+      }
       
       pi = ggplot(data = df, aes(x = time, y = c_mean, colour = strain, ymin = c_mean-c_confint, ymax = c_mean+c_confint)) + 
         geom_line() + 
@@ -222,7 +227,7 @@ for (i in unique(newdf$strain)){
         width = 5,
         height = 3.5, 
         dpi = 600)
-    }
+    
     
     last5mins = non_nan_newdf[non_nan_newdf$time > 26,]
     
@@ -252,37 +257,79 @@ for (i in unique(newdf$strain)){
       ci_last5 = append(ci_last5, (last5$estimate[[1]] - last5$conf.int[[1]]))
       pvalues_last5 = append(pvalues_last5, t.test(c_auc ~ strain, data = df.summary_last5)$p.value * (length(unique(newdf$strain))-2))
       
-    }
+    }}
+    print(i)
+  }
+  else{
+  df = newdf[newdf$strain == i,]
+    if (length(unique(df$strain)) > 0){
+      folders = unique(sapply(df[df$strain == i,]$file, FUN = function(x) {strsplit(x, "/")[[1]][3]}))
+      df <- df[sapply(df$file, FUN = function(x) { strsplit(x, "/")[[1]][3] }) %in% folders, ]
+      non_nan_newdf = strain_cleanup(df)
+      
+      last5mins = non_nan_newdf[non_nan_newdf$time > 26,]
+      df.summary_auc <- non_nan_newdf %>%
+        group_by(strain, file) %>%
+        summarise(.groups="keep", 
+          c_auc = trapz(time, chemotaxis_index)
+      )
+    
+      df.summary_last5 <- last5mins %>%
+        group_by(strain, file) %>%
+        summarise(.groups="keep",
+          c_auc = trapz(time, chemotaxis_index)
+      )
+      if (i != "WT"){
+        total_data = dplyr::bind_rows(total_data, df.summary_auc[df.summary_auc$strain == i,])
+        last5_data = dplyr::bind_rows(last5_data, df.summary_last5[df.summary_last5$strain == i,])
+        strains = append(strains, i)
+        print(length(df.summary_auc$strain))
+        n = append(n, length(df.summary_auc[df.summary_auc$strain == i,]$strain))
+        total = t.test(df.summary_auc[df.summary_auc$strain == i,]$c_auc)
+        meanauc_total = append(meanauc_total, total$estimate[[1]])
+        ci_total = append(ci_total, (total$estimate[[1]] - total$conf.int[[1]]))
+        pvalues_total = append(pvalues_total, 1)
+        
+        last5 = t.test(df.summary_last5[df.summary_last5$strain == i,]$c_auc)
+        meanauc_last5 = append(meanauc_last5, last5$estimate[[1]])
+        ci_last5 = append(ci_last5, (last5$estimate[[1]] - last5$conf.int[[1]]))
+        pvalues_last5 = append(pvalues_last5, 1)
+        
+    }}
 
     print(i)
-        }
+}}
 
-  
-  
-}
+df_out = df_out %>% arrange(factor(strains.color, levels = c('lightblue', 'lightgray')), ordered = T) %>% mutate(strains.color=factor(strains.color, levels = c('lightblue', 'lightgray')))
+
+
 
 df_out = data.frame(strains, meanauc_total, ci_total, pvalues_total, meanauc_last5, ci_last5, pvalues_last5, n)
+df_out$strains.color = ifelse(df_out$strains =="tgMOR","lightblue","lightgray")
+other_strains <- unique(df_out$strains[df_out$strains != "tgMOR"])
+df_out$strains=factor(df_out$strains, levels = c("tgMOR", other_strains))
 
-Strains.color <- ifelse(df_out$strain =="tgMOR","lightblue","lightgray")
-p1 = ggplot(data = df_out, aes(x = strains, y = -meanauc_total, fill = Strains.color)) + 
+p1 = ggplot(data = df_out, aes(x = strains, y = meanauc_total, fill = strains.color)) + 
   geom_bar(stat="identity", show.legend = FALSE) + 
   ylab("Mean AUC over whole trial") + 
   xlab("Strains") + 
-  geom_errorbar(aes(ymin = -meanauc_total-ci_total, ymax=-meanauc_total+ci_total), width=.2, position=position_dodge(.9)) + 
+  geom_errorbar(aes(ymin = meanauc_total-ci_total, ymax=meanauc_total+ci_total), width=.2, position=position_dodge(.9)) + 
   theme_classic() +
-  scale_fill_manual(name = "strains", values=Strains.color)
-
+  scale_fill_identity() +
+  theme(axis.text.x = element_text(face = "italic")) + 
+  scale_y_reverse()
 p1
 
-p2 = ggplot(data = df_out, aes(x = strains, y = -meanauc_last5, fill = Strains.color)) + 
+p2 = ggplot(data = df_out, aes(x = strains, y = meanauc_last5, fill = strains.color)) + 
   geom_bar(stat="identity", show.legend = FALSE) + 
-  geom_errorbar(aes(ymin = -meanauc_last5-ci_last5, ymax=-meanauc_last5+ci_last5), width=.2,
+  geom_errorbar(aes(ymin = meanauc_last5-ci_last5, ymax=meanauc_last5+ci_last5), width=.2,
                 position=position_dodge(.9)) + 
   ylab("Mean AUC over last 5 minutes") +
   xlab("Strains")+
-  scale_fill_manual(values=Strains.color) + 
-  theme_classic() 
-  
+  scale_fill_identity() + 
+  theme_classic() +
+  theme(axis.text.x = element_text(face = "italic")) + 
+  scale_y_reverse()
 p2
 
 ggsave(
@@ -298,5 +345,4 @@ ggsave(
   width = 7,
   height = 3.5, 
   dpi = 600)
-
 
