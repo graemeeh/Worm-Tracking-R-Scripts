@@ -3,21 +3,21 @@
 # the marked circles outputted by the tracker are used to figure out quadrants. so make sure plates are aligned on tracker (i.e. lines 
 # are vertical or horizontal). 
 
-
 library(ggplot2)
 library(dplyr)
 library(tidyr)
 library(pracma)
 library(purrr)
 library(stringr)
+options(dplyr.summarise.inform = TRUE)
 
 folder = "./GE Octanol quadrants - Copy"
 timelapse_interval_s = 10
 controls = "tgMOR"
 framesize = c(2456, 2052)
-centre_radius = 200
 
-options(dplyr.summarise.inform = TRUE)
+# this draws a circle in the middle of the plate with radius given in pixels. 
+centre_radius = 200
 
 #these should be appropriately named .csv files containing worm midpoint positions over time
 position_files = list.files(path = folder, pattern = "*.avi_worms.csv", ignore.case = T, recursive=T, full.names = T) 
@@ -30,6 +30,7 @@ label_files = list.files(path = folder,pattern = "*.avi_details.csv",ignore.case
 label_data = lapply(label_files, read.csv, blank.lines.skip = F)
 names(label_data) = label_files
 
+# finds minimum distance between points in a list and a defined coordinate
 min_dist = function(x1, y1, lx2, ly2){
   d2 = c()
   for (i in 1:length(lx2)){
@@ -37,6 +38,7 @@ min_dist = function(x1, y1, lx2, ly2){
   return(which.min(d2))
 }
 
+# This renames strains to genes. I am too lazy to rename files so I use this. 
 strainrenamer = function(st){
   for (i in 1:length(st)){
     if (is.na(st[i])){
@@ -88,10 +90,11 @@ reframe = function(l1){
   return(new_frames)
 }
 
+# These two functions use the circle-finding functionality of worm tracker 
+# and either exclude worms inside a circle or exclude worms outside of a circle
 exclude_circle = function(x, y, circ_x, circ_y, rad){
   return (!((x-circ_x)^2 + (y-circ_y)^2 <= rad^2))
 }
-
 include_circle = function(x, y, circ_x, circ_y, rad){
   return ((x-circ_x)^2 + (y-circ_y)^2 <= rad^2)
 }
@@ -103,6 +106,8 @@ newdf = data.frame(time=numeric(),
                    strain = character(), 
                    stringsAsFactors = F)
 
+# This bit figures out which quadrants the worms are in, calculates chemotaxis index, 
+# and puts data into newdf
 for (i in position_files) {
   strain = strsplit(strsplit(strsplit(i, "/")[[1]][4], "_")[[1]][1], ".", fixed = TRUE)[[1]][1]
   print(strain)
@@ -152,9 +157,9 @@ for (i in position_files) {
   newdf = dplyr::bind_rows(df_wormsums, newdf)
   
 }
-
 newdf$strain = strainrenamer(newdf$strain)
-# THis bit is to make both strains have the same length ie if one has worms appear earlier the timepoints from earlier are removed 
+
+# THis is to make both strains have the same length ie if one has worms appear earlier the timepoints from earlier are removed 
 # necessary for AUC
 print(unique(newdf$strain))
 strain_cleanup = function(df){
@@ -175,18 +180,16 @@ strain_cleanup = function(df){
 }
 
 
-strains = c()
-meanauc_total = c()
-ci_total = c()
-pvalues_total = c()
-meanauc_last5 = c()
-ci_last5 = c()
-pvalues_last5 = c()
-n= c()
-
+df_out = data.frame(strains = c(), meanauc_total = c(), ci_total = c(), 
+                    pvalues_total = c(), meanauc_last5 = c(), ci_last5 = c(), 
+                    pvalues_last5 = c(), n = c())
+df_out_median = data.frame(strains = c(), medianauc_total = c(), iqr_total = c(), 
+                           pvalues_total = c(), medianauc_last5 = c(), iqr_last5 = c(), 
+                           pvalues_last5 = c(), n = c())
 total_data = data.frame(strain = c(), file = c(), c_auc = c())
 last5_data = data.frame(strain = c(), file = c(), c_auc = c())
 
+# this bit calculates auc and summary stats (mean and median, confidence intervals and IQR, p-values)
 for (i in unique(newdf$strain)){
   if (i != "tgMOR"){
     df = newdf[newdf$strain == i | newdf$strain == controls,]
@@ -245,18 +248,20 @@ for (i in unique(newdf$strain)){
     if (i != "WT"){
       total_data = dplyr::bind_rows(total_data, df.summary_auc[df.summary_auc$strain == i,])
       last5_data = dplyr::bind_rows(last5_data, df.summary_last5[df.summary_last5$strain == i,])
-      strains = append(strains, i)
-      n = append(n, length(df.summary_auc[df.summary_auc$strain == i,]$strain))
       total = t.test(df.summary_auc[df.summary_auc$strain == i,]$c_auc)
-      meanauc_total = append(meanauc_total, total$estimate[[1]])
-      ci_total = append(ci_total, (total$estimate[[1]] - total$conf.int[[1]]))
-      pvalues_total = append(pvalues_total, t.test(c_auc ~ strain, data = df.summary_auc)$p.value * (length(unique(newdf$strain))-2))
-      
       last5 = t.test(df.summary_last5[df.summary_last5$strain == i,]$c_auc)
-      meanauc_last5 = append(meanauc_last5, last5$estimate[[1]])
-      ci_last5 = append(ci_last5, (last5$estimate[[1]] - last5$conf.int[[1]]))
-      pvalues_last5 = append(pvalues_last5, t.test(c_auc ~ strain, data = df.summary_last5)$p.value * (length(unique(newdf$strain))-2))
-      
+      df_out = dplyr::bind_rows(df_out, data.frame(strains = c(i), meanauc_total = c(total$estimate[[1]]), ci_total = c(total$estimate[[1]] - total$conf.int[[1]]), 
+                                                   pvalues_total = c(t.test(c_auc ~ strain, data = df.summary_auc)$p.value * (length(unique(newdf$strain))-2)), 
+                                                   meanauc_last5 = c(last5$estimate[[1]]), ci_last5 = c(last5$estimate[[1]] - last5$conf.int[[1]]), 
+                                                   pvalues_last5 = c(t.test(c_auc ~ strain, data = df.summary_last5)$p.value * (length(unique(newdf$strain))-2)), 
+                                                   n = c(length(df.summary_auc[df.summary_auc$strain == i,]$strain))))
+      df_out_median = dplyr::bind_rows(df_out_median, data.frame(strains = c(i), medianauc_total = c(median(df.summary_auc[df.summary_auc$strain == i,]$c_auc)), 
+                                                                 iqr_total = c(IQR(df.summary_auc[df.summary_auc$strain == i,]$c_auc)), 
+                                                                 pvalues_total = c(wilcox.test(c_auc ~ strain, data = df.summary_auc)$p.value * (length(unique(newdf$strain))-2)), 
+                                                                 medianauc_last5 = c(median(df.summary_last5[df.summary_last5$strain == i,]$c_auc)), 
+                                                                 iqr_last5 = c(IQR(df.summary_last5[df.summary_last5$strain == i,]$c_auc)), 
+                                                                 pvalues_last5 = c(wilcox.test(c_auc ~ strain, data = df.summary_last5)$p.value * (length(unique(newdf$strain))-2)), 
+                                                                 n = c(length(df.summary_auc[df.summary_auc$strain == i,]$strain))))
     }}
     print(i)
   }
@@ -282,33 +287,37 @@ for (i in unique(newdf$strain)){
       if (i != "WT"){
         total_data = dplyr::bind_rows(total_data, df.summary_auc[df.summary_auc$strain == i,])
         last5_data = dplyr::bind_rows(last5_data, df.summary_last5[df.summary_last5$strain == i,])
-        strains = append(strains, i)
-        print(length(df.summary_auc$strain))
-        n = append(n, length(df.summary_auc[df.summary_auc$strain == i,]$strain))
         total = t.test(df.summary_auc[df.summary_auc$strain == i,]$c_auc)
-        meanauc_total = append(meanauc_total, total$estimate[[1]])
-        ci_total = append(ci_total, (total$estimate[[1]] - total$conf.int[[1]]))
-        pvalues_total = append(pvalues_total, 1)
-        
         last5 = t.test(df.summary_last5[df.summary_last5$strain == i,]$c_auc)
-        meanauc_last5 = append(meanauc_last5, last5$estimate[[1]])
-        ci_last5 = append(ci_last5, (last5$estimate[[1]] - last5$conf.int[[1]]))
-        pvalues_last5 = append(pvalues_last5, 1)
-        
-    }}
-
+        df_out = dplyr::bind_rows(df_out, data.frame(strains = c(i), meanauc_total = c(total$estimate[[1]]), ci_total = c(total$estimate[[1]] - total$conf.int[[1]]), 
+                                                     pvalues_total = c(1), meanauc_last5 = c(last5$estimate[[1]]), ci_last5 = c(last5$estimate[[1]] - last5$conf.int[[1]]), 
+                                                     pvalues_last5 = c(1), n = c(length(df.summary_auc[df.summary_auc$strain == i,]$strain))))
+        df_out_median = dplyr::bind_rows(df_out_median, data.frame(strains = c(i), medianauc_total = c(median(df.summary_auc[df.summary_auc$strain == i,]$c_auc)), 
+                                                                   iqr_total = c(IQR(df.summary_auc[df.summary_auc$strain == i,]$c_auc)), 
+                                                                   pvalues_total = c(1), 
+                                                                   medianauc_last5 = c(median(df.summary_last5[df.summary_last5$strain == i,]$c_auc)), 
+                                                                   iqr_last5 = c(IQR(df.summary_last5[df.summary_last5$strain == i,]$c_auc)), 
+                                                                   pvalues_last5 = c(1), 
+                                                                   n = c(length(df.summary_auc[df.summary_auc$strain == i,]$strain))))
+        }}
+    
     print(i)
-}}
+  }}
 
+# normality test for each strain: if data normally distributed, continue using t test. if not, use nonparametric test
+for (i in unique(total_data$strain)){
+  print(i)
+  print(shapiro.test(total_data[total_data$strain == i,]$c_auc)$p.value)
+  print(shapiro.test(last5_data[last5_data$strain == i,]$c_auc)$p.value)
+}
+
+df_out$strains.color = ifelse(df_out$strains =="tgMOR","lightblue","lightgray")
 df_out = df_out %>% arrange(factor(strains.color, levels = c('lightblue', 'lightgray')), ordered = T) %>% mutate(strains.color=factor(strains.color, levels = c('lightblue', 'lightgray')))
 
+df_out_median$strains.color = ifelse(df_out_median$strains =="tgMOR","lightblue","lightgray")
+df_out_median = df_out_median %>% arrange(factor(strains.color, levels = c('lightblue', 'lightgray')), ordered = T) %>% mutate(strains.color=factor(strains.color, levels = c('lightblue', 'lightgray')))
 
-
-df_out = data.frame(strains, meanauc_total, ci_total, pvalues_total, meanauc_last5, ci_last5, pvalues_last5, n)
-df_out$strains.color = ifelse(df_out$strains =="tgMOR","lightblue","lightgray")
-other_strains <- unique(df_out$strains[df_out$strains != "tgMOR"])
-df_out$strains=factor(df_out$strains, levels = c("tgMOR", other_strains))
-
+# plot mean or median, depending on results of normality test.
 p1 = ggplot(data = df_out, aes(x = strains, y = meanauc_total, fill = strains.color)) + 
   geom_bar(stat="identity", show.legend = FALSE) + 
   ylab("Mean AUC over whole trial") + 
@@ -332,17 +341,6 @@ p2 = ggplot(data = df_out, aes(x = strains, y = meanauc_last5, fill = strains.co
   scale_y_reverse()
 p2
 
-ggsave(
-  filename = "total.png",
-  plot = p1, 
-  width = 7,
-  height = 3.5, 
-  dpi = 600)
-
-ggsave(
-  filename = "last_5.png",
-  plot = p2, 
-  width = 7,
-  height = 3.5, 
-  dpi = 600)
+ggsave(filename = "total.png",plot = p1, width = 7,height = 3.5, dpi = 600)
+ggsave(filename = "last_5.png", plot = p2, width = 7, height = 3.5, dpi = 600)
 
