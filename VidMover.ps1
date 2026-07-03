@@ -1,4 +1,3 @@
-# Define your source and destination paths here
 $SourceDir = "E:\GE\GE Ethanol Quadrants"
 $DestDir = "E:\GE\GE Ethanol Quadrants resampled"
 $TargetSuffix = "*output_sampled.avi"
